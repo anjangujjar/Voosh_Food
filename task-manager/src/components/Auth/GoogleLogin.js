@@ -15,7 +15,7 @@ const GoogleLoginComponent = () => {
             localStorage.setItem('token', res.data.token);
             navigate('/tasks');
         } catch (error) {
-            console.error(error);
+            console.error('Error during Google login:', error);
         }
     };
 

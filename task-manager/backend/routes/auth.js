@@ -1,81 +1,45 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const router = express.Router();
 const passport = require('passport');
-const { OAuth2Strategy } = require('passport-google-oauth');
+const GoogleStrategy = require('passport-google-oauth').OAuth2Strategy;
 const User = require('../models/User');
 const keys = require('../config/keys');
-const router = express.Router();
 
-passport.use(new OAuth2Strategy({
+// Passport Google OAuth setup
+passport.use(new GoogleStrategy({
     clientID: keys.googleClientID,
     clientSecret: keys.googleClientSecret,
-    callbackURL: "/api/auth/google/callback"
-},
-    async (token, tokenSecret, profile, done) => {
-        try {
-            let user = await User.findOne({ googleId: profile.id });
-            if (!user) {
-                user = new User({
-                    googleId: profile.id,
-                    email: profile.emails[0].value,
-                    avatar: profile.photos[0].value
-                });
-                await user.save();
-            }
-            done(null, user);
-        } catch (error) {
-            done(error, false);
-        }
-    }
+    callbackURL: "/auth/google/callback"
+  },
+  function(accessToken, refreshToken, profile, done) {
+    // Find or create a user in your database
+    User.findOne({ googleId: profile.id }, (err, existingUser) => {
+      if (err) return done(err);
+      if (existingUser) return done(null, existingUser);
+
+      // If no user exists, create a new user
+      const newUser = new User({
+        googleId: profile.id,
+        name: profile.displayName,
+        email: profile.emails[0].value
+      });
+
+      newUser.save((err) => {
+        if (err) return done(err);
+        return done(null, newUser);
+      });
+    });
+  }
 ));
 
-router.post('/register', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        let user = await User.findOne({ email });
-        if (user) return res.status(400).json({ msg: 'User already exists' });
+// Google OAuth route
+router.get('/google', passport.authenticate('google', {
+  scope: ['profile', 'email']
+}));
 
-        user = new User({ email, password });
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(password, salt);
-        await user.save();
-
-        const payload = { user: { id: user.id } };
-        jwt.sign(payload, keys.jwtSecret, { expiresIn: 3600 }, (err, token) => {
-            if (err) throw err;
-            res.json({ token });
-        });
-    } catch (error) {
-        res.status(500).send('Server error');
-    }
-});
-
-router.post('/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        const user = await User.findOne({ email });
-        if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
-
-        const payload = { user: { id: user.id } };
-        jwt.sign(payload, keys.jwtSecret, { expiresIn: 3600 }, (err, token) => {
-            if (err) throw err;
-            res.json({ token });
-        });
-    } catch (error) {
-        res.status(500).send('Server error');
-    }
-});
-
-router.post('/google', passport.authenticate('google-token', { session: false }), (req, res) => {
-    const payload = { user: { id: req.user.id } };
-    jwt.sign(payload, keys.jwtSecret, { expiresIn: 3600 }, (err, token) => {
-        if (err) throw err;
-        res.json({ token });
-    });
+// Google OAuth callback route
+router.get('/google/callback', passport.authenticate('google'), (req, res) => {
+  res.redirect('/'); // Redirect to home or another route after successful login
 });
 
 module.exports = router;
